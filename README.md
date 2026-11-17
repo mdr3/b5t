@@ -171,6 +171,26 @@ sudo ecapture gotls -m text --text-source=pcapng --elfpath /path/to/go-client -i
 sudo ecapture gnutls -m text --text-source=pcapng --gnutls /path/to/libgnutls.so -i eth0 'tcp port 443'
 ```
 
+#### HAR export
+
+`tls` and `gotls` accept `--harfile <path>` to write decoded HTTP into a
+[HAR 1.2](http://www.softwareishard.com/blog/har-12-spec/) archive that browser
+DevTools and proxy tooling can import directly. The sink runs alongside the
+normal event stream, so `--eventaddr`/stdout is unaffected.
+
+HTTP/1.1 and HTTP/2 are both decoded. HTTP/2 entries follow RFC 9113: the
+header names are lowercased, the pseudo-headers are emitted first
+(`:method`, `:authority`, `:scheme`, `:path` for requests, `:status` for
+responses), `statusText` is empty because h2 has no reason phrase,
+`httpVersion` is `h2`, `headersSize` is `-1` (an HPACK block has no HAR octet
+count) and the stream id is carried in the `_streamId` extension field.
+HTTP/1.1 entries keep their reason phrase, original header casing and measured
+sizes.
+
+```shell
+sudo ecapture tls --libssl=/apex/com.android.conscrypt/lib64/libssl.so --harfile /tmp/capture.har 'tcp port 443'
+```
+
 The decryptor waits for TLS secrets that may appear in a DSB after the
 corresponding packets. HTTP/3 over QUIC v1/v2 has GoTLS test fixtures;
 support depends on the TLS backend supplying the required secrets.
