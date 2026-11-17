@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +28,7 @@ import (
 // http2Version is the HAR httpVersion reported for HTTP/2 exchanges. The
 // protocol stays visible in the archive even though entries are rendered like
 // HTTP/1 messages, the same way an intercepting proxy presents them.
-const http2Version = "HTTP/2"
+const http2Version = "h2"
 
 // http2Preface is the client connection preface that selects h2 framing for a
 // stream.
@@ -467,13 +466,13 @@ func (c *Correlator) h2FinishBlock(st *stream, dir *h2Dir, streamID uint32, from
 		s = c.h2Stream(st, streamID, now)
 	}
 	if pushed {
-		s.req = buildH2Request(headers, now, st.tuple)
+		s.req = buildH2Request(headers, now, st.tuple, s.id)
 		s.reqWire += int64(len(block) + h2FrameHeaderLen)
 		s.reqClosed = true
 	} else if fromClient {
 		s.reqWire += int64(len(block) + h2FrameHeaderLen)
 		if s.req == nil {
-			s.req = buildH2Request(headers, now, st.tuple)
+			s.req = buildH2Request(headers, now, st.tuple, s.id)
 		} else if s.req.method == "" {
 			applyH2Request(s.req, headers, st.tuple)
 		} else {
@@ -642,17 +641,18 @@ func h2StripPadding(payload []byte, flags byte) ([]byte, error) {
 	return payload[1 : len(payload)-padding], nil
 }
 
-func buildH2Request(fields []NameValue, now time.Time, tuple string) *parsedRequest {
+func buildH2Request(fields []NameValue, now time.Time, tuple string, id uint32) *parsedRequest {
 	req := &parsedRequest{
-		version: http2Version,
-		start:   now,
+		version:  http2Version,
+		streamID: id,
+		start:    now,
 	}
 	applyH2Request(req, fields, tuple)
 	return req
 }
 
 func applyH2Request(req *parsedRequest, fields []NameValue, tuple string) {
-	req.headers = fields
+	req.headers = normalizeH2Headers(fields, true)
 	var scheme, authority, path string
 	for _, field := range fields {
 		switch field.Name {
@@ -712,7 +712,49 @@ func applyH2Status(resp *parsedResponse, fields []NameValue) {
 		}
 		if code, err := strconv.Atoi(field.Value); err == nil && code >= 100 && code <= 999 {
 			resp.status = code
-			resp.statusText = http.StatusText(code)
+			// HTTP/2 has no reason phrase; statusText stays empty per HAR 1.2.
+			resp.statusText = ""
 		}
 	}
+}
+
+// h2RequestPseudoOrder is the order RFC 9113 recommends for request pseudo
+// headers; HAR readers expect them up front.
+var h2RequestPseudoOrder = []string{":method", ":authority", ":scheme", ":path"}
+
+// normalizeH2Headers lowercases header names (RFC 9113 §8.2) and moves the
+// pseudo-headers to the front in the documented order.
+func normalizeH2Headers(fields []NameValue, request bool) []NameValue {
+	out := make([]NameValue, 0, len(fields))
+	lower := func(name string) string { return strings.ToLower(name) }
+	placed := make(map[string]bool, 4)
+	pick := func(want []string) {
+		for _, name := range want {
+			for _, field := range fields {
+				key := lower(field.Name)
+				if key != name || placed[key] {
+					continue
+				}
+				placed[key] = true
+				out = append(out, NameValue{Name: key, Value: field.Value})
+				break
+			}
+		}
+	}
+	if request {
+		pick(h2RequestPseudoOrder)
+	} else {
+		pick([]string{":status"})
+	}
+	for _, field := range fields {
+		key := lower(field.Name)
+		if strings.HasPrefix(key, ":") && placed[key] {
+			continue
+		}
+		if strings.HasPrefix(key, ":") {
+			placed[key] = true
+		}
+		out = append(out, NameValue{Name: key, Value: field.Value})
+	}
+	return out
 }

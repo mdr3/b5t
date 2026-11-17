@@ -145,4 +145,6 @@ type Entry struct {
 	Timings         Timings  `json:"timings"`
 	ServerIPAddress string   `json:"serverIPAddress,omitempty"`
 	Connection      string   `json:"connection,omitempty"`
+	// StreamID is an HTTP/2 extension field (underscore-prefixed per HAR 1.2).
+	StreamID uint32 `json:"_streamId,omitempty"`
 }

@@ -482,8 +482,28 @@ func TestH2RequestResponse(t *testing.T) {
 	if entry.Request.PostData == nil || entry.Request.PostData.Text != "payload" || entry.Request.BodySize != 7 {
 		t.Errorf("request body = %#v size=%d", entry.Request.PostData, entry.Request.BodySize)
 	}
-	if entry.Response.Status != 200 || entry.Response.StatusText != "OK" {
+	if entry.Response.Status != 200 || entry.Response.StatusText != "" {
 		t.Errorf("response = %d %q", entry.Response.Status, entry.Response.StatusText)
+	}
+	if entry.Request.HeadersSize != -1 || entry.Response.HeadersSize != -1 {
+		t.Errorf("headersSize = %d/%d, want -1 for h2", entry.Request.HeadersSize, entry.Response.HeadersSize)
+	}
+	if entry.StreamID != 1 {
+		t.Errorf("_streamId = %d, want 1", entry.StreamID)
+	}
+	pseudoOrder := []string{":method", ":authority", ":scheme", ":path"}
+	if len(entry.Request.Headers) < len(pseudoOrder) {
+		t.Fatalf("request headers = %#v", entry.Request.Headers)
+	}
+	for i, want := range pseudoOrder {
+		if entry.Request.Headers[i].Name != want {
+			t.Errorf("request header[%d] = %q, want %q", i, entry.Request.Headers[i].Name, want)
+		}
+	}
+	for _, header := range entry.Request.Headers {
+		if header.Name != strings.ToLower(header.Name) {
+			t.Errorf("header %q not lowercase", header.Name)
+		}
 	}
 	if entry.Response.Content.Text != "ok" || entry.Response.Content.Size != 2 {
 		t.Errorf("content = %#v", entry.Response.Content)

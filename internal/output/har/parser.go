@@ -69,6 +69,7 @@ type parsedRequest struct {
 	bodySize      int64
 	bodyTruncated bool
 	headerSize    int64
+	streamID      uint32
 	start         time.Time
 	end           time.Time
 }
@@ -305,6 +306,18 @@ func buildEntry(st *stream, req *parsedRequest, resp *parsedResponse) Entry {
 	wait := durationMillis(resp.start.Sub(req.end))
 	receive := durationMillis(resp.end.Sub(resp.start))
 
+	h2 := req.version == http2Version
+	reqHeadersSize := req.headerSize
+	respHeadersSize := resp.headerSize
+	statusText := resp.statusText
+	if h2 {
+		// HPACK-compressed header blocks have no on-the-wire octet count that
+		// matches HAR semantics, so both sides report -1 (HAR 1.2 §5.2).
+		reqHeadersSize = -1
+		respHeadersSize = -1
+		statusText = ""
+	}
+
 	entry := Entry{
 		StartedDateTime: formatTimestamp(req.start),
 		Time:            send + wait + receive,
@@ -315,12 +328,12 @@ func buildEntry(st *stream, req *parsedRequest, resp *parsedResponse) Entry {
 			Cookies:     parseRequestCookies(req.headers),
 			Headers:     nonNilHeaders(req.headers),
 			QueryString: queryString(req.target),
-			HeadersSize: req.headerSize,
+			HeadersSize: reqHeadersSize,
 			BodySize:    req.bodySize,
 		},
 		Response: Response{
 			Status:      resp.status,
-			StatusText:  resp.statusText,
+			StatusText:  statusText,
 			HTTPVersion: resp.version,
 			Cookies:     parseResponseCookies(resp.headers),
 			Headers:     nonNilHeaders(resp.headers),
@@ -332,11 +345,12 @@ func buildEntry(st *stream, req *parsedRequest, resp *parsedResponse) Entry {
 				Comment:  responseBody.comment,
 			},
 			RedirectURL: headerValue(resp.headers, "location"),
-			HeadersSize: resp.headerSize,
+			HeadersSize: respHeadersSize,
 			BodySize:    resp.bodySize,
 		},
-		Cache:   Cache{},
-		Timings: Timings{Send: send, Wait: wait, Receive: receive},
+		Cache:    Cache{},
+		Timings:  Timings{Send: send, Wait: wait, Receive: receive},
+		StreamID: req.streamID,
 	}
 	if host := hostFromTuple(st.tuple); host != "" {
 		entry.ServerIPAddress = hostOnly(host)
