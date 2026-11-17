@@ -37,6 +37,7 @@ import (
 	"github.com/gojue/ecapture/v2/internal/factory"
 	internalLogger "github.com/gojue/ecapture/v2/internal/logger"
 	outputpipeline "github.com/gojue/ecapture/v2/internal/output"
+	"github.com/gojue/ecapture/v2/internal/output/har"
 	"github.com/gojue/ecapture/v2/internal/output/writers"
 	"github.com/gojue/ecapture/v2/internal/probe/base/handlers"
 	"github.com/gojue/ecapture/v2/pkg/ecaptureq"
@@ -268,6 +269,38 @@ type probeGeneration struct {
 	cancel context.CancelFunc
 }
 
+// attachHAROutput registers an additional HAR sink when --harfile is set.
+// The handler consumes OpenSSL TLS payloads, correlates them into HTTP
+// exchanges, and owns its sink for the probe lifetime.
+func attachHAROutput(probe domain.Probe, cfg domain.Configuration, logger *zerolog.Logger) error {
+	harFile := ""
+	if provider, ok := cfg.(interface{ GetHarFile() string }); ok {
+		harFile = strings.TrimSpace(provider.GetHarFile())
+	}
+	if harFile == "" {
+		return nil
+	}
+	dispatcherProvider, ok := probe.(interface{ Dispatcher() domain.EventDispatcher })
+	if !ok || dispatcherProvider.Dispatcher() == nil {
+		return fmt.Errorf("probe %T has no event dispatcher", probe)
+	}
+	sink, err := writers.NewWriterFactory().CreateEventSink(writers.EventSinkOptions{
+		Address:   harFile,
+		Format:    writers.EventFormatHar,
+		Sensitive: true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create HAR sink: %w", err)
+	}
+	handler := har.NewHandler(sink, GitVersion)
+	if err := dispatcherProvider.Dispatcher().Register(handler); err != nil {
+		_ = sink.Close()
+		return fmt.Errorf("failed to register HAR handler: %w", err)
+	}
+	logger.Info().Str("har_sink", sink.Name()).Msg("HAR handler registered")
+	return nil
+}
+
 func startProbeGeneration(
 	parent context.Context,
 	probeType factory.ProbeType,
@@ -294,6 +327,10 @@ func startProbeGeneration(
 		return nil, fmt.Errorf("probe initialization failed: %w", err)
 	}
 	logger.Info().Str("probeName", string(probeType)).Bool("isReload", isReload).Msg("probe initialization.")
+	if err = attachHAROutput(probe, probeConfig, logger); err != nil {
+		cancelProbe()
+		return nil, errors.Join(fmt.Errorf("HAR output setup failed: %w", err), probe.Close())
+	}
 	if err = probe.Start(probeCtx); err != nil {
 		cancelProbe()
 		return nil, errors.Join(fmt.Errorf("probe start failed: %w", err), probe.Close())

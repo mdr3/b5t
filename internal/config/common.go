@@ -213,5 +213,8 @@ func MergeReloadOutput(current, candidate any, patch CommonConfigPatch) error {
 	if patch.EventRotateSeconds == nil {
 		candidateBase.EventRotateSeconds = currentBase.EventRotateSeconds
 	}
+	if candidateBase.HarFile == "" {
+		candidateBase.HarFile = currentBase.HarFile
+	}
 	return nil
 }

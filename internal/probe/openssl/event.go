@@ -404,3 +404,9 @@ func getClockOffset() (int64, error) {
 
 	return realNs - monoNs, nil
 }
+
+// GetClockOffset exposes the realtime-minus-monotonic clock offset (ns) for
+// consumers that convert eBPF monotonic timestamps to wall-clock time.
+func GetClockOffset() (int64, error) {
+	return getClockOffset()
+}

@@ -48,6 +48,7 @@ func init() {
 	gotlsCmd.PersistentFlags().BoolVar(&globalConf.PerfReorder, "perf-reorder", false, "enable userland reorder of per-CPU perf events by bpf ktime before dispatch (see also: tls, mysqld, postgres)")
 	gotlsCmd.PersistentFlags().UintVar(&globalConf.PerfReorderLagMs, "perf-reorder-lag-ms", 10, "reorder batching window in milliseconds (only with --perf-reorder; default 10)")
 	gotlsCmd.PersistentFlags().StringVarP(&gotlsConfig.PcapFile, "pcapfile", "w", "ecapture_gotls.pcapng", "write the  raw packets to file as pcapng format.")
+	gotlsCmd.PersistentFlags().StringVar(&gotlsConfig.HarFile, "harfile", "", "write decrypted HTTP/1.x traffic to a HAR 1.2 archive (empty disables it).")
 	gotlsCmd.PersistentFlags().StringVarP(&gotlsConfig.CaptureMode, "model", "m", "text", "capture mode: text, pcap/pcapng, key/keylog")
 	gotlsCmd.PersistentFlags().StringVar(&gotlsConfig.TextSource, "text-source", handlers.TextSourcePcapng, "text capture source: pcapng (live TLS decryption) or hook")
 	bindDecryptFlags(gotlsCmd, &gotlsConfig.DecryptConfig)
@@ -59,7 +60,7 @@ func init() {
 
 // goTLSCommandFunc executes the "gotls" command using the new probe architecture.
 func goTLSCommandFunc(command *cobra.Command, args []string) error {
-	if err := normalizeTLSOutputFlags(command, gotlsConfig.CaptureMode, &gotlsConfig.TextSource, &gotlsConfig.KeylogFile, &gotlsConfig.PcapFile); err != nil {
+	if err := normalizeTLSOutputFlags(command, gotlsConfig.CaptureMode, &gotlsConfig.TextSource, &gotlsConfig.KeylogFile, &gotlsConfig.PcapFile, &gotlsConfig.HarFile); err != nil {
 		return err
 	}
 	if gotlsConfig.PcapFilter == "" && len(args) != 0 {

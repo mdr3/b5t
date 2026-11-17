@@ -29,6 +29,7 @@ const (
 	EventFormatText   EventFormat = "text"
 	EventFormatKeylog EventFormat = "keylog"
 	EventFormatPcapng EventFormat = "pcapng"
+	EventFormatHar    EventFormat = "har"
 )
 
 // EventSinkOptions keeps representation policy separate from URI parsing.
@@ -91,7 +92,7 @@ type byteSinkPolicy struct {
 // ValidateEventSinkAddress rejects malformed or incompatible configurations
 // without opening a file or network connection.
 func (f *WriterFactory) ValidateEventSinkAddress(options EventSinkOptions) error {
-	if options.Format != EventFormatText && options.Format != EventFormatKeylog && options.Format != EventFormatPcapng {
+	if options.Format != EventFormatText && options.Format != EventFormatKeylog && options.Format != EventFormatPcapng && options.Format != EventFormatHar {
 		return fmt.Errorf("unsupported event format %q", options.Format)
 	}
 	if options.Address == "" {
@@ -128,12 +129,12 @@ func (f *WriterFactory) CreateEventSink(options EventSinkOptions) (ByteSink, err
 	}
 
 	fileConfig := FileWriterConfig{
-		Truncate: options.Format == EventFormatKeylog || options.Format == EventFormatPcapng,
+		Truncate: options.Format == EventFormatKeylog || options.Format == EventFormatPcapng || options.Format == EventFormatHar,
 	}
-	if options.Format == EventFormatPcapng {
+	if options.Format == EventFormatPcapng || options.Format == EventFormatHar {
 		fileConfig.BufferSize = 64 * 1024
 	}
-	if options.Format == EventFormatKeylog || options.Format == EventFormatPcapng {
+	if options.Format == EventFormatKeylog || options.Format == EventFormatPcapng || options.Format == EventFormatHar {
 		fileConfig.Permissions = 0600
 	}
 	if options.Sensitive {

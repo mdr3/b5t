@@ -94,6 +94,7 @@ type BaseConfig struct {
 	TruncateSize       uint64                              `json:"truncate_size"`
 	LoggerAddr         string                              `json:"logger_addr"`
 	EventCollectorAddr string                              `json:"event_collector_addr"`
+	HarFile            string                              `json:"harfile"`
 	EventRotateSizeMB  uint16                              `json:"event_rotate_size_mb"`
 	EventRotateSeconds uint16                              `json:"event_rotate_seconds"`
 	EcaptureQ          string                              `json:"ecapture_q"`
@@ -293,6 +294,11 @@ func (c *BaseConfig) GetEventCollectorAddr() string {
 // SetEventCollectorAddr sets the event collector address.
 func (c *BaseConfig) SetEventCollectorAddr(addr string) {
 	c.EventCollectorAddr = addr
+}
+
+// GetHarFile returns the optional HAR 1.2 archive destination.
+func (c *BaseConfig) GetHarFile() string {
+	return c.HarFile
 }
 
 // SetEventRotation configures rotation for compatible captured-event files.

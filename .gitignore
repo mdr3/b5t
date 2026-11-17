@@ -51,3 +51,5 @@ pkg/proc/go_elf/go_elf
 /AGENTS.local.md
 /CLAUDE.local.md
 /.claude/settings.local.json
+/kern/vmlinux.h
+/kern/vmlinux.source

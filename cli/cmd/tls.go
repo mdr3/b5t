@@ -56,6 +56,7 @@ func init() {
 	bindDecryptFlags(opensslCmd, &opensslConfig.DecryptConfig)
 	opensslCmd.PersistentFlags().StringVarP(&opensslConfig.KeylogFile, "keylogfile", "k", "ecapture_openssl_key.log", "The file stores SSL/TLS keys, and eCapture captures these keys during encrypted traffic communication and saves them to the file.")
 	opensslCmd.PersistentFlags().StringVarP(&opensslConfig.PcapFile, "pcapfile", "w", "save.pcapng", "write the raw packets to file as pcapng format.")
+	opensslCmd.PersistentFlags().StringVar(&opensslConfig.HarFile, "harfile", "", "write decrypted HTTP/1.x traffic to a HAR 1.2 archive (empty disables it).")
 	opensslCmd.PersistentFlags().StringVarP(&opensslConfig.Ifname, "ifname", "i", "", "capture interface; automatically selected from default routes, then traffic counters, when omitted")
 	opensslCmd.PersistentFlags().StringVar(&opensslConfig.SslVersion, "ssl_version", "", "openssl/boringssl version， e.g: --ssl_version=\"openssl 1.1.1g\" or  --ssl_version=\"boringssl 1.1.1\".")
 	opensslCmd.PersistentFlags().BoolVar(&globalConf.PerfReorder, "perf-reorder", false, "enable userland reorder of per-CPU perf events by bpf ktime before dispatch")
@@ -65,7 +66,7 @@ func init() {
 
 // openSSLCommandFunc executes the "tls" command using the new probe architecture.
 func openSSLCommandFunc(command *cobra.Command, args []string) error {
-	if err := normalizeTLSOutputFlags(command, opensslConfig.CaptureMode, &opensslConfig.TextSource, &opensslConfig.KeylogFile, &opensslConfig.PcapFile); err != nil {
+	if err := normalizeTLSOutputFlags(command, opensslConfig.CaptureMode, &opensslConfig.TextSource, &opensslConfig.KeylogFile, &opensslConfig.PcapFile, &opensslConfig.HarFile); err != nil {
 		return err
 	}
 	if opensslConfig.PcapFilter == "" && len(args) != 0 {

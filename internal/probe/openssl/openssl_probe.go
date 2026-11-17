@@ -211,6 +211,18 @@ func (p *Probe) Events() []*ebpf.Map {
 	return p.eventMaps
 }
 
+// stopManager stops the eBPF manager, tolerating the panic ebpfmanager raises
+// when Start failed early and the manager has no collection to close. Without
+// this the panic masks the real Start error.
+func (p *Probe) stopManager() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			p.Logger().Warn().Msgf("recovered while stopping eBPF manager: %v", r)
+		}
+	}()
+	return p.bpfManager.Stop(manager.CleanAll)
+}
+
 // Close releases all probe resources.
 func (p *Probe) Close() error {
 	p.Logger().Debug().Msg("Closing OpenSSL probe")
@@ -218,7 +230,7 @@ func (p *Probe) Close() error {
 	// Stop eBPF manager
 	if p.bpfManager != nil {
 		p.Logger().Debug().Msg("Stopping eBPF manager")
-		if err := p.bpfManager.Stop(manager.CleanAll); err != nil {
+		if err := p.stopManager(); err != nil {
 			p.Logger().Warn().Err(err).Msg("Failed to stop eBPF manager")
 		}
 		p.Logger().Debug().Msg("eBPF manager stopped")
