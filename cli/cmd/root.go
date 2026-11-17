@@ -37,6 +37,7 @@ import (
 	"github.com/gojue/ecapture/v2/internal/factory"
 	internalLogger "github.com/gojue/ecapture/v2/internal/logger"
 	outputpipeline "github.com/gojue/ecapture/v2/internal/output"
+	"github.com/gojue/ecapture/v2/internal/output/burpxml"
 	"github.com/gojue/ecapture/v2/internal/output/har"
 	"github.com/gojue/ecapture/v2/internal/output/writers"
 	"github.com/gojue/ecapture/v2/internal/probe/base/handlers"
@@ -301,6 +302,37 @@ func attachHAROutput(probe domain.Probe, cfg domain.Configuration, logger *zerol
 	return nil
 }
 
+// attachXMLOutput registers an additional Burp XML sink when --xmlfile is set.
+// It runs independently of --harfile and owns its sink for the probe lifetime.
+func attachXMLOutput(probe domain.Probe, cfg domain.Configuration, logger *zerolog.Logger) error {
+	xmlFile := ""
+	if provider, ok := cfg.(interface{ GetXmlFile() string }); ok {
+		xmlFile = strings.TrimSpace(provider.GetXmlFile())
+	}
+	if xmlFile == "" {
+		return nil
+	}
+	dispatcherProvider, ok := probe.(interface{ Dispatcher() domain.EventDispatcher })
+	if !ok || dispatcherProvider.Dispatcher() == nil {
+		return fmt.Errorf("probe %T has no event dispatcher", probe)
+	}
+	sink, err := writers.NewWriterFactory().CreateEventSink(writers.EventSinkOptions{
+		Address:   xmlFile,
+		Format:    writers.EventFormatBurpXML,
+		Sensitive: true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create Burp XML sink: %w", err)
+	}
+	handler := burpxml.NewHandler(sink)
+	if err := dispatcherProvider.Dispatcher().Register(handler); err != nil {
+		_ = sink.Close()
+		return fmt.Errorf("failed to register Burp XML handler: %w", err)
+	}
+	logger.Info().Str("xml_sink", sink.Name()).Msg("Burp XML handler registered")
+	return nil
+}
+
 func startProbeGeneration(
 	parent context.Context,
 	probeType factory.ProbeType,
@@ -330,6 +362,10 @@ func startProbeGeneration(
 	if err = attachHAROutput(probe, probeConfig, logger); err != nil {
 		cancelProbe()
 		return nil, errors.Join(fmt.Errorf("HAR output setup failed: %w", err), probe.Close())
+	}
+	if err = attachXMLOutput(probe, probeConfig, logger); err != nil {
+		cancelProbe()
+		return nil, errors.Join(fmt.Errorf("Burp XML output setup failed: %w", err), probe.Close())
 	}
 	if err = probe.Start(probeCtx); err != nil {
 		cancelProbe()

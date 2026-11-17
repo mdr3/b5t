@@ -204,11 +204,12 @@ func TestNormalizeTLSOutputFlagsConflicts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			command := &cobra.Command{Use: "test"}
-			var eventAddress, keylogFile, pcapFile, harFile string
+			var eventAddress, keylogFile, pcapFile, harFile, xmlFile string
 			command.Flags().StringVar(&eventAddress, "eventaddr", "", "")
 			command.Flags().StringVar(&keylogFile, "keylogfile", "default.keys", "")
 			command.Flags().StringVar(&pcapFile, "pcapfile", "default.pcapng", "")
 			command.Flags().StringVar(&harFile, "harfile", "", "")
+			command.Flags().StringVar(&xmlFile, "xmlfile", "", "")
 			if err := command.Flags().Set("eventaddr", "tcp://127.0.0.1:9000"); err != nil {
 				t.Fatal(err)
 			}
@@ -216,7 +217,7 @@ func TestNormalizeTLSOutputFlagsConflicts(t *testing.T) {
 				t.Fatal(err)
 			}
 			source := handlers.TextSourceHook
-			err := normalizeTLSOutputFlags(command, test.mode, &source, &keylogFile, &pcapFile, &harFile)
+			err := normalizeTLSOutputFlags(command, test.mode, &source, &keylogFile, &pcapFile, &harFile, &xmlFile)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("normalizeTLSOutputFlags() error = %v, wantErr %v", err, test.wantErr)
 			}
@@ -241,17 +242,18 @@ func TestNormalizeTLSOutputFlagsHarConflicts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			command := &cobra.Command{Use: "test"}
-			var eventAddress, keylogFile, pcapFile, harFile string
+			var eventAddress, keylogFile, pcapFile, harFile, xmlFile string
 			command.Flags().StringVar(&eventAddress, "eventaddr", "", "")
 			command.Flags().StringVar(&keylogFile, "keylogfile", "default.keys", "")
 			command.Flags().StringVar(&pcapFile, "pcapfile", "default.pcapng", "")
 			command.Flags().StringVar(&harFile, "harfile", "", "")
+			command.Flags().StringVar(&xmlFile, "xmlfile", "", "")
 			keylogFile, pcapFile = test.keylog, test.pcap
 			if err := command.Flags().Set("harfile", test.har); err != nil {
 				t.Fatal(err)
 			}
 			source := handlers.TextSourceHook
-			err := normalizeTLSOutputFlags(command, test.mode, &source, &keylogFile, &pcapFile, &harFile)
+			err := normalizeTLSOutputFlags(command, test.mode, &source, &keylogFile, &pcapFile, &harFile, &xmlFile)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("normalizeTLSOutputFlags() error = %v, wantErr %v", err, test.wantErr)
 			}
@@ -262,21 +264,66 @@ func TestNormalizeTLSOutputFlagsHarConflicts(t *testing.T) {
 	}
 }
 
+func TestNormalizeTLSOutputFlagsXMLConflicts(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		keylog  string
+		pcap    string
+		har     string
+		xml     string
+		wantErr bool
+	}{
+		{name: "xml clashes with keylog", mode: "keylog", keylog: "same.file", xml: "same.file", wantErr: true},
+		{name: "xml clashes with pcap", mode: "pcapng", pcap: "same.file", xml: "same.file", wantErr: true},
+		{name: "xml clashes with har", mode: "text", har: "same.file", xml: "same.file", wantErr: true},
+		{name: "har and xml are additive in text mode", mode: "text", har: "capture.har", xml: " capture.xml "},
+		{name: "distinct keylog and xml", mode: "keylog", keylog: "capture.keys", xml: "capture.xml"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command := &cobra.Command{Use: "test"}
+			var eventAddress, keylogFile, pcapFile, harFile, xmlFile string
+			command.Flags().StringVar(&eventAddress, "eventaddr", "", "")
+			command.Flags().StringVar(&keylogFile, "keylogfile", "default.keys", "")
+			command.Flags().StringVar(&pcapFile, "pcapfile", "default.pcapng", "")
+			command.Flags().StringVar(&harFile, "harfile", "", "")
+			command.Flags().StringVar(&xmlFile, "xmlfile", "", "")
+			keylogFile, pcapFile = test.keylog, test.pcap
+			if err := command.Flags().Set("harfile", test.har); err != nil {
+				t.Fatal(err)
+			}
+			if err := command.Flags().Set("xmlfile", test.xml); err != nil {
+				t.Fatal(err)
+			}
+			source := handlers.TextSourceHook
+			err := normalizeTLSOutputFlags(command, test.mode, &source, &keylogFile, &pcapFile, &harFile, &xmlFile)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("normalizeTLSOutputFlags() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if !test.wantErr && xmlFile != strings.TrimSpace(test.xml) {
+				t.Fatalf("xmlfile = %q, want %q", xmlFile, strings.TrimSpace(test.xml))
+			}
+		})
+	}
+}
+
 func TestNormalizeTLSPcapngTextOutputFlags(t *testing.T) {
 	for _, savePcap := range []bool{false, true} {
 		command := &cobra.Command{Use: "test"}
-		var eventAddress, keylogFile, pcapFile, harFile string
+		var eventAddress, keylogFile, pcapFile, harFile, xmlFile string
 		command.Flags().StringVar(&eventAddress, "eventaddr", "", "")
 		command.Flags().StringVar(&keylogFile, "keylogfile", "default.keys", "")
 		command.Flags().StringVar(&pcapFile, "pcapfile", "default.pcapng", "")
 		command.Flags().StringVar(&harFile, "harfile", "", "")
+		command.Flags().StringVar(&xmlFile, "xmlfile", "", "")
 		if savePcap {
 			if err := command.Flags().Set("pcapfile", "capture.pcapng"); err != nil {
 				t.Fatal(err)
 			}
 		}
 		source := handlers.TextSourcePcapng
-		if err := normalizeTLSOutputFlags(command, handlers.ModeText, &source, &keylogFile, &pcapFile, &harFile); err != nil {
+		if err := normalizeTLSOutputFlags(command, handlers.ModeText, &source, &keylogFile, &pcapFile, &harFile, &xmlFile); err != nil {
 			t.Fatal(err)
 		}
 		if keylogFile != "" {

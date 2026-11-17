@@ -95,6 +95,7 @@ type BaseConfig struct {
 	LoggerAddr         string                              `json:"logger_addr"`
 	EventCollectorAddr string                              `json:"event_collector_addr"`
 	HarFile            string                              `json:"harfile"`
+	XmlFile            string                              `json:"xmlfile"`
 	EventRotateSizeMB  uint16                              `json:"event_rotate_size_mb"`
 	EventRotateSeconds uint16                              `json:"event_rotate_seconds"`
 	EcaptureQ          string                              `json:"ecapture_q"`
@@ -299,6 +300,11 @@ func (c *BaseConfig) SetEventCollectorAddr(addr string) {
 // GetHarFile returns the optional HAR 1.2 archive destination.
 func (c *BaseConfig) GetHarFile() string {
 	return c.HarFile
+}
+
+// GetXmlFile returns the optional Burp XML export destination.
+func (c *BaseConfig) GetXmlFile() string {
+	return c.XmlFile
 }
 
 // SetEventRotation configures rotation for compatible captured-event files.

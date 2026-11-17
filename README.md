@@ -191,6 +191,21 @@ sizes.
 sudo ecapture tls --libssl=/apex/com.android.conscrypt/lib64/libssl.so --harfile /tmp/capture.har 'tcp port 443'
 ```
 
+#### Burp XML export
+
+`--xmlfile <path>` writes the same decoded exchanges as a Burp Suite bulk-export
+XML document that Burp, ZAP and Caido import directly. It can run alongside
+`--harfile`; the two flags must not share a path, and the file must also differ
+from `--keylogfile`/`--pcapfile` when those are the active destinations.
+
+HTTP/2 exchanges are re-rendered as HTTP/1.1 with CRLF line endings inside the
+base64 payload: pseudo-headers are dropped, `:authority` becomes a `Host`
+header, and the path and status come from `:path` and `:status`.
+
+```shell
+sudo ecapture tls --libssl=/apex/com.android.conscrypt/lib64/libssl.so --xmlfile /tmp/capture.xml 'tcp port 443'
+```
+
 The decryptor waits for TLS secrets that may appear in a DSB after the
 corresponding packets. HTTP/3 over QUIC v1/v2 has GoTLS test fixtures;
 support depends on the TLS backend supplying the required secrets.

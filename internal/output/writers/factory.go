@@ -26,10 +26,11 @@ import (
 type EventFormat string
 
 const (
-	EventFormatText   EventFormat = "text"
-	EventFormatKeylog EventFormat = "keylog"
-	EventFormatPcapng EventFormat = "pcapng"
-	EventFormatHar    EventFormat = "har"
+	EventFormatText    EventFormat = "text"
+	EventFormatKeylog  EventFormat = "keylog"
+	EventFormatPcapng  EventFormat = "pcapng"
+	EventFormatHar     EventFormat = "har"
+	EventFormatBurpXML EventFormat = "burpxml"
 )
 
 // EventSinkOptions keeps representation policy separate from URI parsing.
@@ -92,7 +93,8 @@ type byteSinkPolicy struct {
 // ValidateEventSinkAddress rejects malformed or incompatible configurations
 // without opening a file or network connection.
 func (f *WriterFactory) ValidateEventSinkAddress(options EventSinkOptions) error {
-	if options.Format != EventFormatText && options.Format != EventFormatKeylog && options.Format != EventFormatPcapng && options.Format != EventFormatHar {
+	if options.Format != EventFormatText && options.Format != EventFormatKeylog && options.Format != EventFormatPcapng &&
+		options.Format != EventFormatHar && options.Format != EventFormatBurpXML {
 		return fmt.Errorf("unsupported event format %q", options.Format)
 	}
 	if options.Address == "" {
@@ -129,12 +131,14 @@ func (f *WriterFactory) CreateEventSink(options EventSinkOptions) (ByteSink, err
 	}
 
 	fileConfig := FileWriterConfig{
-		Truncate: options.Format == EventFormatKeylog || options.Format == EventFormatPcapng || options.Format == EventFormatHar,
+		Truncate: options.Format == EventFormatKeylog || options.Format == EventFormatPcapng ||
+			options.Format == EventFormatHar || options.Format == EventFormatBurpXML,
 	}
-	if options.Format == EventFormatPcapng || options.Format == EventFormatHar {
+	if options.Format == EventFormatPcapng || options.Format == EventFormatHar || options.Format == EventFormatBurpXML {
 		fileConfig.BufferSize = 64 * 1024
 	}
-	if options.Format == EventFormatKeylog || options.Format == EventFormatPcapng || options.Format == EventFormatHar {
+	if options.Format == EventFormatKeylog || options.Format == EventFormatPcapng ||
+		options.Format == EventFormatHar || options.Format == EventFormatBurpXML {
 		fileConfig.Permissions = 0600
 	}
 	if options.Sensitive {

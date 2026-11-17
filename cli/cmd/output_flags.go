@@ -34,10 +34,16 @@ func bindDecryptFlags(command *cobra.Command, cfg *config.DecryptConfig) {
 	flags.StringVar(&cfg.TextUDPProtocol, "text-udp-protocol", "", "UDP decryptor: quic (default) or dtls (pcapng text source)")
 }
 
-func normalizeTLSOutputFlags(command *cobra.Command, mode string, textSource, keylogFile, pcapFile, harFile *string) error {
+func normalizeTLSOutputFlags(command *cobra.Command, mode string, textSource, keylogFile, pcapFile, harFile, xmlFile *string) error {
 	mode = strings.ToLower(mode)
 	if harFile != nil {
 		*harFile = strings.TrimSpace(*harFile)
+	}
+	if xmlFile != nil {
+		*xmlFile = strings.TrimSpace(*xmlFile)
+	}
+	if harFile != nil && xmlFile != nil && *harFile != "" && *harFile == *xmlFile {
+		return fmt.Errorf("--harfile and --xmlfile cannot use the same file")
 	}
 	if flag := command.Flag("text-source"); flag != nil && !flag.Changed {
 		*textSource = ""
@@ -63,9 +69,15 @@ func normalizeTLSOutputFlags(command *cobra.Command, mode string, textSource, ke
 		if !eventAddrChanged && harFile != nil && *harFile != "" && *harFile == *keylogFile {
 			return fmt.Errorf("--harfile and --keylogfile cannot use the same file")
 		}
+		if !eventAddrChanged && xmlFile != nil && *xmlFile != "" && *xmlFile == *keylogFile {
+			return fmt.Errorf("--xmlfile and --keylogfile cannot use the same file")
+		}
 	case handlers.ModePcap, handlers.ModePcapng:
 		if !eventAddrChanged && harFile != nil && *harFile != "" && *harFile == *pcapFile {
 			return fmt.Errorf("--harfile and --pcapfile cannot use the same file")
+		}
+		if !eventAddrChanged && xmlFile != nil && *xmlFile != "" && *xmlFile == *pcapFile {
+			return fmt.Errorf("--xmlfile and --pcapfile cannot use the same file")
 		}
 	}
 	if !eventAddrChanged {

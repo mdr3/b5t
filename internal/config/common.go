@@ -216,5 +216,8 @@ func MergeReloadOutput(current, candidate any, patch CommonConfigPatch) error {
 	if candidateBase.HarFile == "" {
 		candidateBase.HarFile = currentBase.HarFile
 	}
+	if candidateBase.XmlFile == "" {
+		candidateBase.XmlFile = currentBase.XmlFile
+	}
 	return nil
 }

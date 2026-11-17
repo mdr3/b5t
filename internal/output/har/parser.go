@@ -103,23 +103,35 @@ type stream struct {
 	lastUsed  time.Time
 }
 
+// EntrySink receives completed request/response pairs from a Correlator.
+type EntrySink interface {
+	WriteEntry(Entry) error
+}
+
 // Correlator pairs request and response byte streams per connection and emits
-// complete HAR entries to the recorder. Feed is safe for concurrent use.
+// complete HAR entries to the sink. Feed is safe for concurrent use.
 type Correlator struct {
-	mu       sync.Mutex
-	recorder *Recorder
-	streams  map[streamKey]*stream
+	mu      sync.Mutex
+	sink    EntrySink
+	streams map[streamKey]*stream
 }
 
 // NewCorrelator creates a correlator that appends completed entries to rec.
 func NewCorrelator(rec *Recorder) *Correlator {
-	return &Correlator{recorder: rec, streams: make(map[streamKey]*stream)}
+	return NewCorrelatorFor(rec)
+}
+
+// NewCorrelatorFor creates a correlator that appends completed entries to sink.
+// It lets sibling exporters reuse the HTTP/1 and HTTP/2 framing without
+// depending on the HAR document writer.
+func NewCorrelatorFor(sink EntrySink) *Correlator {
+	return &Correlator{sink: sink, streams: make(map[streamKey]*stream)}
 }
 
 // Feed consumes one TLS data event. Parse failures never escape: incomplete
 // messages simply stay buffered until more bytes arrive.
 func (c *Correlator) Feed(event *openssl.Event) {
-	if event == nil || c.recorder == nil {
+	if event == nil || c.sink == nil {
 		return
 	}
 	data := event.GetData()
@@ -295,7 +307,7 @@ func (c *Correlator) consumeResponses(st *stream, now time.Time) {
 
 func (c *Correlator) emit(st *stream, req *parsedRequest, resp *parsedResponse) {
 	entry := buildEntry(st, req, resp)
-	c.recorder.WriteEntry(entry)
+	c.sink.WriteEntry(entry)
 }
 
 func buildEntry(st *stream, req *parsedRequest, resp *parsedResponse) Entry {
