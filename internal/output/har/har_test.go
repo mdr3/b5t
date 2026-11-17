@@ -17,10 +17,12 @@ package har
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +30,7 @@ import (
 	"github.com/gojue/ecapture/v2/internal/domain"
 	"github.com/gojue/ecapture/v2/internal/output/writers"
 	"github.com/gojue/ecapture/v2/internal/probe/openssl"
+	"golang.org/x/net/http2/hpack"
 )
 
 type bufferSink struct {
@@ -378,3 +381,499 @@ func (e *foreignEvent) Clone() domain.Event          { return &foreignEvent{} }
 func (e *foreignEvent) Type() domain.EventType       { return domain.EventTypeOutput }
 func (e *foreignEvent) UUID() string                 { return "foreign" }
 func (e *foreignEvent) Validate() error              { return nil }
+
+// h2TestEncoder keeps one HPACK encoder alive per connection direction so
+// dynamic table references stay valid across header blocks.
+type h2TestEncoder struct {
+	buf bytes.Buffer
+	enc *hpack.Encoder
+}
+
+func newH2TestEncoder() *h2TestEncoder {
+	e := &h2TestEncoder{}
+	e.enc = hpack.NewEncoder(&e.buf)
+	return e
+}
+
+func (e *h2TestEncoder) block(t *testing.T, fields ...hpack.HeaderField) []byte {
+	t.Helper()
+	e.buf.Reset()
+	for _, field := range fields {
+		if err := e.enc.WriteField(field); err != nil {
+			t.Fatalf("hpack encode %q: %v", field.Name, err)
+		}
+	}
+	return append([]byte(nil), e.buf.Bytes()...)
+}
+
+func h2Frame(frameType, flags byte, streamID uint32, payload []byte) []byte {
+	frame := make([]byte, h2FrameHeaderLen, h2FrameHeaderLen+len(payload))
+	frame[0] = byte(len(payload) >> 16)
+	frame[1] = byte(len(payload) >> 8)
+	frame[2] = byte(len(payload))
+	frame[3] = frameType
+	frame[4] = flags
+	binary.BigEndian.PutUint32(frame[5:], streamID)
+	return append(frame, payload...)
+}
+
+func h2RequestFields(method, path, authority string) []hpack.HeaderField {
+	return []hpack.HeaderField{
+		{Name: ":method", Value: method},
+		{Name: ":authority", Value: authority},
+		{Name: ":scheme", Value: "https"},
+		{Name: ":path", Value: path},
+		{Name: "user-agent", Value: "har-h2-test"},
+		{Name: "accept", Value: "*/*"},
+	}
+}
+
+func h2ResponseFields(status, contentType string) []hpack.HeaderField {
+	fields := []hpack.HeaderField{{Name: ":status", Value: status}}
+	if contentType != "" {
+		fields = append(fields, hpack.HeaderField{Name: "content-type", Value: contentType})
+	}
+	return fields
+}
+
+func feedBytes(t *testing.T, handler *Handler, dataType int64, payload []byte) {
+	t.Helper()
+	if err := handler.Handle(tlsEvent(11, 22, dataType, payload)); err != nil {
+		t.Fatalf("Handle() error: %v", err)
+	}
+}
+
+// feedH2 starts an h2 capture on a fresh handler and returns its encoders.
+func feedH2(t *testing.T, handler *Handler) (*h2TestEncoder, *h2TestEncoder) {
+	t.Helper()
+	feedBytes(t, handler, openssl.DataTypeWrite, []byte(http2Preface))
+	return newH2TestEncoder(), newH2TestEncoder()
+}
+
+func TestH2RequestResponse(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 1, client.block(t, h2RequestFields("POST", "/upload?x=1&y=2", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeWrite, h2Frame(h2FrameData, 0, 1, []byte("payload")))
+	feedBytes(t, handler, openssl.DataTypeWrite, h2Frame(h2FrameData, h2FlagEndStream, 1, nil))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, h2FlagEndStream, 1, []byte("ok")))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1\n%s", len(document.Entries), sink.String())
+	}
+	entry := document.Entries[0]
+	if entry.Request.HTTPVersion != http2Version || entry.Response.HTTPVersion != http2Version {
+		t.Fatalf("httpVersion = %q/%q", entry.Request.HTTPVersion, entry.Response.HTTPVersion)
+	}
+	if entry.Request.Method != "POST" {
+		t.Errorf("method = %q", entry.Request.Method)
+	}
+	if entry.Request.URL != "https://example.com/upload?x=1&y=2" {
+		t.Errorf("url = %q", entry.Request.URL)
+	}
+	if len(entry.Request.QueryString) != 2 || entry.Request.QueryString[0].Name != "x" {
+		t.Errorf("queryString = %#v", entry.Request.QueryString)
+	}
+	if entry.Request.PostData == nil || entry.Request.PostData.Text != "payload" || entry.Request.BodySize != 7 {
+		t.Errorf("request body = %#v size=%d", entry.Request.PostData, entry.Request.BodySize)
+	}
+	if entry.Response.Status != 200 || entry.Response.StatusText != "OK" {
+		t.Errorf("response = %d %q", entry.Response.Status, entry.Response.StatusText)
+	}
+	if entry.Response.Content.Text != "ok" || entry.Response.Content.Size != 2 {
+		t.Errorf("content = %#v", entry.Response.Content)
+	}
+	if entry.Response.Content.MimeType != "text/plain" {
+		t.Errorf("mimeType = %q", entry.Response.Content.MimeType)
+	}
+	if len(entry.Response.Headers) != 2 || entry.Response.Headers[0].Name != ":status" ||
+		entry.Response.Headers[1].Name != "content-type" {
+		t.Errorf("response headers = %#v", entry.Response.Headers)
+	}
+	pseudo := false
+	for _, header := range entry.Request.Headers {
+		if header.Name == ":path" && header.Value == "/upload?x=1&y=2" {
+			pseudo = true
+		}
+	}
+	if !pseudo {
+		t.Errorf("pseudo-headers missing from request headers: %#v", entry.Request.Headers)
+	}
+	if !strings.HasSuffix(entry.Request.URL, "/upload?x=1&y=2") {
+		t.Errorf("url = %q", entry.Request.URL)
+	}
+}
+
+func TestH2HuffmanAndIncrementalIndexing(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	huffmanValue := strings.Repeat("huffman-", 12)
+	requestFields := append(h2RequestFields("GET", "/huffman", "example.com"),
+		hpack.HeaderField{Name: "x-literal-header", Value: huffmanValue})
+	requestBlock := client.block(t, requestFields...)
+	if bytes.Contains(requestBlock, []byte(huffmanValue)) {
+		t.Fatalf("test block is not huffman encoded")
+	}
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, requestBlock))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1,
+			server.block(t, h2ResponseFields("204", "")...)))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(document.Entries))
+	}
+	value := ""
+	for _, header := range document.Entries[0].Request.Headers {
+		if header.Name == "x-literal-header" {
+			value = header.Value
+		}
+	}
+	if value != huffmanValue {
+		t.Fatalf("decoded header = %q, want %q", value, huffmanValue)
+	}
+	if document.Entries[0].Request.URL != "https://example.com/huffman" {
+		t.Fatalf("url = %q", document.Entries[0].Request.URL)
+	}
+}
+
+func TestH2MultiplexedStreams(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, client.block(t, h2RequestFields("GET", "/one", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 3, client.block(t, h2RequestFields("GET", "/three", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 3, server.block(t, h2ResponseFields("200", "text/plain")...)))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, 0, 1, []byte("one-")))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, h2FlagEndStream, 3, []byte("three")))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 1, server.block(t, h2ResponseFields("404", "text/plain")...)))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, h2FlagEndStream, 1, []byte("one")))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2\n%s", len(document.Entries), sink.String())
+	}
+	byPath := map[string]Entry{}
+	for _, entry := range document.Entries {
+		byPath[entry.Request.URL] = entry
+	}
+	first, ok := byPath["https://example.com/one"]
+	if !ok {
+		t.Fatalf("missing /one entry: %#v", byPath)
+	}
+	second, ok := byPath["https://example.com/three"]
+	if !ok {
+		t.Fatalf("missing /three entry: %#v", byPath)
+	}
+	if first.Response.Status != 404 || first.Response.Content.Text != "one-one" {
+		t.Fatalf("first = %#v", first.Response)
+	}
+	if second.Response.Status != 200 || second.Response.Content.Text != "three" {
+		t.Fatalf("second = %#v", second.Response)
+	}
+}
+
+func TestH2ContinuationFrames(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	block := client.block(t, h2RequestFields("GET", "/continued", "example.com")...)
+	split := len(block) / 2
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndStream, 1, block[:split]))
+	feedBytes(t, handler, openssl.DataTypeWrite, h2Frame(h2FrameContinuation, 0, 1, block[split:split+3]))
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameContinuation, h2FlagEndHeaders, 1, block[split+3:]))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1\n%s", len(document.Entries), sink.String())
+	}
+	if document.Entries[0].Request.URL != "https://example.com/continued" {
+		t.Fatalf("url = %q", document.Entries[0].Request.URL)
+	}
+}
+
+func TestH2PaddedData(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, client.block(t, h2RequestFields("GET", "/padded", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+	padded := append([]byte{3}, []byte("abc")...)
+	padded = append(padded, 0, 0, 0)
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, h2FlagPadded|h2FlagEndStream, 1, padded))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(document.Entries))
+	}
+	content := document.Entries[0].Response.Content
+	if content.Text != "abc" || content.Size != 3 {
+		t.Fatalf("content = %#v", content)
+	}
+}
+
+func TestH2ResetStreamKeepsPartialEntry(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 1, client.block(t, h2RequestFields("POST", "/reset", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, 0, 1, []byte("par")))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameRSTStream, 0, 1, []byte{0, 0, 0, 8}))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1\n%s", len(document.Entries), sink.String())
+	}
+	entry := document.Entries[0]
+	if entry.Request.URL != "https://example.com/reset" || entry.Response.Status != 200 {
+		t.Fatalf("entry = %#v", entry)
+	}
+	if entry.Response.Content.Text != "par" || entry.Response.Content.Size != 3 {
+		t.Fatalf("content = %#v", entry.Response.Content)
+	}
+}
+
+func TestH2BinaryBodyUsesBase64(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, client.block(t, h2RequestFields("GET", "/binary", "example.com")...)))
+	binaryBody := []byte{0xff, 0xfe, 0x00, 0x01}
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 1, server.block(t, h2ResponseFields("200", "application/octet-stream")...)))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, h2FlagEndStream, 1, binaryBody))
+
+	document := closeAndParse(t, handler, sink)
+	content := document.Entries[0].Response.Content
+	if content.Encoding != "base64" {
+		t.Fatalf("encoding = %q", content.Encoding)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(content.Text)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if !bytes.Equal(decoded, binaryBody) || content.Size != int64(len(binaryBody)) {
+		t.Fatalf("decoded = %x size = %d", decoded, content.Size)
+	}
+	if content.MimeType != "application/octet-stream" {
+		t.Fatalf("mimeType = %q", content.MimeType)
+	}
+}
+
+func TestH2PrefaceAndFramesAcrossEvents(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	block := client.block(t, h2RequestFields("GET", "/split", "example.com")...)
+	frame := h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, block)
+	feedBytes(t, handler, openssl.DataTypeWrite, frame[:7])
+	feedBytes(t, handler, openssl.DataTypeWrite, frame[7:12])
+	feedBytes(t, handler, openssl.DataTypeWrite, frame[12:])
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 || document.Entries[0].Request.URL != "https://example.com/split" {
+		t.Fatalf("entries = %#v", document.Entries)
+	}
+}
+
+func TestH2HPACKErrorKeepsPipeline(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, client.block(t, h2RequestFields("GET", "/broken", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+	// Garbage HPACK on stream 3, then a healthy request on stream 5.
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 3, []byte{0xff, 0xff, 0xff, 0xff}))
+	after := newH2TestEncoder()
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 5, after.block(t, h2RequestFields("GET", "/healthy", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 5, server.block(t, h2ResponseFields("200", "text/plain")...)))
+
+	document := closeAndParse(t, handler, sink)
+	urls := make([]string, 0, len(document.Entries))
+	for _, entry := range document.Entries {
+		urls = append(urls, entry.Request.URL)
+	}
+	if len(document.Entries) != 2 {
+		t.Fatalf("entries = %#v", urls)
+	}
+	if urls[0] != "https://example.com/broken" || urls[1] != "https://example.com/healthy" {
+		t.Fatalf("urls = %#v", urls)
+	}
+}
+
+func TestH2GoAwayFlushesOpenStreams(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, _ := feedH2(t, handler)
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 1, client.block(t, h2RequestFields("GET", "/goaway", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameGoAway, 0, 0, []byte{0, 0, 0, 0, 0, 0, 0, 0}))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 || document.Entries[0].Request.URL != "https://example.com/goaway" {
+		t.Fatalf("entries = %#v", document.Entries)
+	}
+	if document.Entries[0].Response.Status != 0 {
+		t.Fatalf("status = %d", document.Entries[0].Response.Status)
+	}
+}
+
+func TestH2PrefaceSplitAcrossEvents(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := newH2TestEncoder(), newH2TestEncoder()
+	feedBytes(t, handler, openssl.DataTypeWrite, []byte(http2Preface[:9]))
+	feedBytes(t, handler, openssl.DataTypeWrite, []byte(http2Preface[9:]))
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, client.block(t, h2RequestFields("GET", "/preface", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 || document.Entries[0].Request.URL != "https://example.com/preface" {
+		t.Fatalf("entries = %#v", document.Entries)
+	}
+}
+
+func TestH2BadPaddingKeepsPipeline(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	for _, streamID := range []uint32{1, 3, 5} {
+		feedBytes(t, handler, openssl.DataTypeWrite,
+			h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, streamID,
+				client.block(t, h2RequestFields("GET", fmt.Sprintf("/p%d", streamID), "example.com")...)))
+	}
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+	// Padding longer than the payload is a stream error on 3.
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, h2FlagPadded|h2FlagEndStream, 3, []byte{9, 'a'}))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 5, server.block(t, h2ResponseFields("200", "text/plain")...)))
+
+	document := closeAndParse(t, handler, sink)
+	urls := make([]string, 0, len(document.Entries))
+	for _, entry := range document.Entries {
+		urls = append(urls, entry.Request.URL)
+	}
+	if len(urls) != 3 {
+		t.Fatalf("urls = %#v", urls)
+	}
+	if urls[0] != "https://example.com/p1" || urls[1] != "https://example.com/p3" || urls[2] != "https://example.com/p5" {
+		t.Fatalf("urls = %#v", urls)
+	}
+}
+
+func TestH2PushPromise(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, client.block(t, h2RequestFields("GET", "/index", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, server.block(t, h2ResponseFields("200", "text/html")...)))
+
+	pushPayload := binary.BigEndian.AppendUint32(nil, 2)
+	pushPayload = append(pushPayload, server.block(t, h2RequestFields("GET", "/pushed.css", "example.com")...)...)
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FramePushPromise, h2FlagEndHeaders, 1, pushPayload))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders, 2, server.block(t, h2ResponseFields("200", "text/css")...)))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameData, h2FlagEndStream, 2, []byte("body{}")))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 2 {
+		t.Fatalf("entries = %#v\n%s", document.Entries, sink.String())
+	}
+	if document.Entries[1].Request.URL != "https://example.com/pushed.css" ||
+		document.Entries[1].Response.Content.Text != "body{}" {
+		t.Fatalf("pushed entry = %#v", document.Entries[1])
+	}
+}
+
+func TestH2AfterH1OnReusedDescriptor(t *testing.T) {
+	handler, sink := newTestHandler()
+	feed(t, handler, 31, 7, openssl.DataTypeWrite, "GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	feed(t, handler, 31, 7, openssl.DataTypeRead, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+
+	client, server := feedH2(t, handler)
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, client.block(t, h2RequestFields("GET", "/second", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2\n%s", len(document.Entries), sink.String())
+	}
+	if document.Entries[0].Request.HTTPVersion != "HTTP/1.1" ||
+		document.Entries[1].Request.HTTPVersion != http2Version {
+		t.Fatalf("versions = %q/%q", document.Entries[0].Request.HTTPVersion, document.Entries[1].Request.HTTPVersion)
+	}
+	if document.Entries[1].Request.URL != "https://example.com/second" {
+		t.Fatalf("url = %q", document.Entries[1].Request.URL)
+	}
+}
+
+func TestH1AfterH2OnReusedDescriptor(t *testing.T) {
+	handler, sink := newTestHandler()
+	client, server := feedH2(t, handler)
+	feedBytes(t, handler, openssl.DataTypeWrite,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, client.block(t, h2RequestFields("GET", "/first", "example.com")...)))
+	feedBytes(t, handler, openssl.DataTypeRead,
+		h2Frame(h2FrameHeaders, h2FlagEndHeaders|h2FlagEndStream, 1, server.block(t, h2ResponseFields("200", "text/plain")...)))
+	feedBytes(t, handler, openssl.DataTypeRead, h2Frame(h2FrameGoAway, 0, 0, make([]byte, 8)))
+
+	feed(t, handler, 31, 7, openssl.DataTypeWrite, "GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	feed(t, handler, 31, 7, openssl.DataTypeRead, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2\n%s", len(document.Entries), sink.String())
+	}
+	if document.Entries[0].Request.HTTPVersion != http2Version ||
+		document.Entries[1].Request.HTTPVersion != "HTTP/1.1" {
+		t.Fatalf("versions = %q/%q", document.Entries[0].Request.HTTPVersion, document.Entries[1].Request.HTTPVersion)
+	}
+	if document.Entries[1].Request.URL != "https://example.com/second" {
+		t.Fatalf("url = %q", document.Entries[1].Request.URL)
+	}
+}
+
+func TestH1AfterPrefaceStillParses(t *testing.T) {
+	handler, sink := newTestHandler()
+	feed(t, handler, 5, 9, openssl.DataTypeWrite, "GET /h1 HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	feed(t, handler, 5, 9, openssl.DataTypeRead, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi")
+
+	document := closeAndParse(t, handler, sink)
+	if len(document.Entries) != 1 || document.Entries[0].Request.HTTPVersion != "HTTP/1.1" {
+		t.Fatalf("entries = %#v", document.Entries)
+	}
+}

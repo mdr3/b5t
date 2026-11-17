@@ -89,9 +89,14 @@ type parsedResponse struct {
 type stream struct {
 	key       streamKey
 	tuple     string
+	mode      streamMode
 	reqBuf    []byte
 	respBuf   []byte
 	pending   []*parsedRequest
+	h2req     h2Dir
+	h2resp    h2Dir
+	h2        map[uint32]*h2Stream
+	h2Stopped bool
 	reqStart  time.Time
 	respStart time.Time
 	lastUsed  time.Time
@@ -138,25 +143,57 @@ func (c *Correlator) Feed(event *openssl.Event) {
 	}
 
 	if event.DataType == openssl.DataTypeWrite {
-		if len(st.reqBuf) == 0 {
-			st.reqStart = now
+		if st.mode == streamModeHTTP2 {
+			st.h2req.buf = append(st.h2req.buf, data...)
+		} else {
+			if len(st.reqBuf) == 0 {
+				st.reqStart = now
+			}
+			st.reqBuf = append(st.reqBuf, data...)
+			c.detectMode(st)
+			if st.mode == streamModeHTTP2 {
+				st.h2req.buf = append(st.h2req.buf, st.reqBuf...)
+				st.reqBuf = nil
+				if len(st.respBuf) > 0 {
+					st.h2resp.buf = append(st.h2resp.buf, st.respBuf...)
+					st.respBuf = nil
+				}
+			}
 		}
-		st.reqBuf = append(st.reqBuf, data...)
-		c.consumeRequests(st, now)
 	} else {
-		if len(st.respBuf) == 0 {
-			st.respStart = now
+		if st.mode == streamModeHTTP2 {
+			st.h2resp.buf = append(st.h2resp.buf, data...)
+		} else {
+			if len(st.respBuf) == 0 {
+				st.respStart = now
+			}
+			st.respBuf = append(st.respBuf, data...)
 		}
-		st.respBuf = append(st.respBuf, data...)
-		c.consumeResponses(st, now)
 	}
 
-	if len(st.reqBuf) == 0 && len(st.respBuf) == 0 && len(st.pending) == 0 {
+	switch st.mode {
+	case streamModeHTTP2:
+		c.h2Consume(st, now)
+	case streamModeHTTP1:
+		if event.DataType == openssl.DataTypeWrite {
+			c.consumeRequests(st, now)
+		} else {
+			c.consumeResponses(st, now)
+		}
+	}
+
+	if len(st.reqBuf) == 0 && len(st.respBuf) == 0 && len(st.pending) == 0 &&
+		len(st.h2req.buf) == 0 && len(st.h2resp.buf) == 0 && len(st.h2) == 0 {
 		// Keep the stream for keep-alive reuse; it is cheap and bounded.
 		return
 	}
-	if len(st.reqBuf) > maxStreamBuffer || len(st.respBuf) > maxStreamBuffer {
+	if len(st.reqBuf) > maxStreamBuffer || len(st.respBuf) > maxStreamBuffer ||
+		len(st.h2req.buf) > maxStreamBuffer || len(st.h2resp.buf) > maxStreamBuffer {
 		// A stream that cannot be framed is hopeless; start it over.
+		if st.mode == streamModeHTTP2 {
+			c.h2Flush(st, now)
+			st.h2Stopped = true
+		}
 		st.reqBuf = st.reqBuf[:0]
 		st.respBuf = st.respBuf[:0]
 		st.pending = st.pending[:0]
@@ -194,6 +231,10 @@ func (c *Correlator) evictLocked() {
 }
 
 func (c *Correlator) consumeRequests(st *stream, now time.Time) {
+	if c.h2TryUpgrade(st) {
+		c.h2Consume(st, now)
+		return
+	}
 	for len(st.reqBuf) > 0 {
 		start := scanRequestStart(st.reqBuf)
 		if start < 0 {
