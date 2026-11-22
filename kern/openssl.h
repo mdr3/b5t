@@ -525,6 +525,23 @@ int probe_tcp_v4_destroy_sock(struct pt_regs* ctx) {
 }
 
 
+// Cronet/BoringSSL attach TLS to BIO pairs via SSL_set0_wbio(ssl, bio); bio->num holds the fd.
+// Map the ssl pointer to that fd so hook-mode plaintext can be associated with a connection.
+SEC("uprobe/SSL_set0_wbio")
+int probe_SSL_set0_bio(struct pt_regs* ctx) {
+    u64 ssl_addr = (u64)openssl_untag_user_pointer((const void *)PT_REGS_PARM1(ctx));
+    u64 bio_ptr  = (u64)openssl_untag_user_pointer((const void *)PT_REGS_PARM2(ctx));
+    if (bio_ptr == 0) return 0;
+    u32 fd = 0;
+    // Android 16 bio_st->num (a_16 layout); untagged helper keeps kern tests happy
+    if (openssl_probe_read_user(&fd, sizeof(fd), (void *)(bio_ptr + 0x20))) {
+        return 0;
+    }
+    u64 fd64 = fd;
+    bpf_map_update_elem(&ssl_st_fd, &ssl_addr, &fd64, BPF_ANY);
+    return 0;
+}
+
 // int SSL_set_fd(SSL *s, int fd)
 // int SSL_set_rfd(SSL *s, int fd)
 // int SSL_set_wfd(SSL *s, int fd)

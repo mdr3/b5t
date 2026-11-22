@@ -54,7 +54,7 @@ func TestConfigTextRaw(t *testing.T) {
 		{"normalized raw pcapng", "TEXT", " PCAPNG ", true, false},
 		{"default text mode", "", "pcapng", true, false},
 		{"reject hook", "text", "hook", true, true},
-		{"raw default pcapng", "text", "", true, false},
+		{"raw default hook", "text", "", true, true},
 		{"reject keylog", "keylog", "hook", true, true},
 		{"reject pcapng", "pcapng", "hook", true, true},
 		{"reject nontext source", "keylog", "pcapng", true, true},
@@ -276,10 +276,10 @@ func TestConfigDefaultTextSource(t *testing.T) {
 		name, mode, source, ifname, want string
 		wantErr                          bool
 	}{
-		{"default text", "text", "", "lo", "pcapng", false},
-		{"empty mode", "", "", "lo", "pcapng", false},
-		{"normalized default", "TEXT", "  ", "lo", "pcapng", false},
-		{"explicit missing interface", "text", "", "nonexistent-interface-12345", "pcapng", true},
+		{"default text", "text", "", "lo", "hook", false},
+		{"empty mode", "", "", "lo", "hook", false},
+		{"normalized default", "TEXT", "  ", "lo", "hook", false},
+		{"explicit missing interface", "text", "", "nonexistent-interface-12345", "hook", false},
 		{"explicit hook without interface", "text", "hook", "", "hook", false},
 		{"normalized hook", "text", " HOOK ", "", "hook", false},
 		{"keylog default", "keylog", "", "", "hook", false},

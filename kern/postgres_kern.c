@@ -33,7 +33,7 @@ struct {
 // versions 10 - now
 // static void exec_simple_query(const char *query_string)
 SEC("uprobe/exec_simple_query")
-int postgres_query(struct pt_regs *ctx) {
+int postgres_query(struct pt_regs* ctx) {
     u64 current_pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = current_pid_tgid >> 32;
 
@@ -45,7 +45,7 @@ int postgres_query(struct pt_regs *ctx) {
     data.pid = pid;  // only process id
     data.timestamp = bpf_ktime_get_ns();
 
-    char *sql_string = (char *)PT_REGS_PARM1(ctx);
+    char* sql_string = (char*)PT_REGS_PARM1(ctx);
     bpf_get_current_comm(&data.comm, sizeof(data.comm));
     bpf_probe_read_user(&data.query, sizeof(data.query), sql_string);
     bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &data, sizeof(data));

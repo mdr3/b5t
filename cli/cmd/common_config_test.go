@@ -308,7 +308,7 @@ func TestTLSModuleTextSourceFlags(t *testing.T) {
 	} {
 		t.Run(module.name, func(t *testing.T) {
 			defaultSource := module.command.PersistentFlags().Lookup("text-source").DefValue
-			if defaultSource != handlers.TextSourcePcapng {
+			if defaultSource != handlers.TextSourceHook {
 				t.Fatalf("default source = %q", defaultSource)
 			}
 			for _, test := range []struct {
@@ -316,11 +316,11 @@ func TestTLSModuleTextSourceFlags(t *testing.T) {
 				args                                         []string
 				wantErr                                      bool
 			}{
-				{name: "default text", mode: "text", wantSource: "pcapng"},
-				{name: "empty mode", wantSource: "pcapng"},
-				{name: "explicit empty source", mode: "text", args: []string{"--text-source="}, wantSource: "pcapng"},
+				{name: "default text", mode: "text", wantSource: "hook", wantKeylog: "default.keys", wantPcap: "default.pcapng"},
+				{name: "empty mode", wantSource: "hook", wantKeylog: "default.keys", wantPcap: "default.pcapng"},
+				{name: "explicit empty source", mode: "text", args: []string{"--text-source="}, wantSource: "hook", wantKeylog: "default.keys", wantPcap: "default.pcapng"},
 				{name: "explicit hook", mode: "text", args: []string{"--text-source=hook"}, wantSource: "hook", wantKeylog: "default.keys", wantPcap: "default.pcapng"},
-				{name: "optional artifacts", mode: "text", args: []string{"--keylogfile=capture.keys", "--pcapfile=capture.pcapng"}, wantSource: "pcapng", wantKeylog: "capture.keys", wantPcap: "capture.pcapng"},
+				{name: "optional artifacts", mode: "text", args: []string{"--keylogfile=capture.keys", "--pcapfile=capture.pcapng"}, wantSource: "hook", wantKeylog: "capture.keys", wantPcap: "capture.pcapng"},
 				{name: "keylog", mode: "keylog", wantSource: "hook", wantKeylog: "default.keys", wantPcap: "default.pcapng"},
 				{name: "pcapng", mode: "pcapng", wantSource: "hook", wantKeylog: "default.keys", wantPcap: "default.pcapng"},
 				{name: "reject explicit nontext source", mode: "keylog", args: []string{"--text-source=pcapng"}, wantErr: true},

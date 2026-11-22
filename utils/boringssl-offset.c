@@ -31,13 +31,14 @@
 //   sentinel) that also doubles as a feature flag read by boringssl_const.h
 //   and boringssl_masterkey.h to switch to the correct code path.
 
+#include <crypto/bio/internal.h>  // bio_st, bio_method_st (opaque in public headers; -I ./src/)
 #include <ctype.h>
 #include <openssl/base.h>
 #include <openssl/crypto.h>
 #include <ssl/internal.h>
-#include <crypto/bio/internal.h>  // bio_st, bio_method_st (opaque in public headers; -I ./src/)
 #include <stddef.h>
 #include <stdio.h>
+
 #include <type_traits>
 
 // ─── Type-trait probes ───────────────────────────────────────────────────────
@@ -45,41 +46,35 @@
 // A removed or private field causes substitution failure → false_type.
 
 // ssl_st::version  (present in Android ≤ 15, removed in Android 16)
-template <typename T, typename = void>
-struct ssl_st_has_version : std::false_type {};
-template <typename T>
-struct ssl_st_has_version<T, std::void_t<decltype(std::declval<T>().version)>> : std::true_type {};
+template<typename T, typename = void> struct ssl_st_has_version : std::false_type {};
+template<typename T> struct ssl_st_has_version<T, std::void_t<decltype(std::declval<T>().version)>> : std::true_type {};
 
 // ssl_session_st::secret_length  (present in Android ≤ 15, removed in Android 16)
-template <typename T, typename = void>
-struct ssl_session_has_secret_length : std::false_type {};
-template <typename T>
-struct ssl_session_has_secret_length<T, std::void_t<decltype(std::declval<T>().secret_length)>>
+template<typename T, typename = void> struct ssl_session_has_secret_length : std::false_type {};
+template<typename T> struct ssl_session_has_secret_length<T, std::void_t<decltype(std::declval<T>().secret_length)>>
     : std::true_type {};
 
 // bssl::SSL3_STATE::version  (absent in Android ≤ 15, added in Android 16)
-template <typename T, typename = void>
-struct ssl3_state_has_version : std::false_type {};
-template <typename T>
-struct ssl3_state_has_version<T, std::void_t<decltype(std::declval<T>().version)>>
+template<typename T, typename = void> struct ssl3_state_has_version : std::false_type {};
+template<typename T> struct ssl3_state_has_version<T, std::void_t<decltype(std::declval<T>().version)>>
     : std::true_type {};
 
 // ssl_cipher_st::id  (uint32 in Android <=16; renamed to protocol_id/uint16 in Android 17)
-template <typename T, typename = void>
-struct ssl_cipher_has_id : std::false_type {};
-template <typename T>
-struct ssl_cipher_has_id<T, std::void_t<decltype(std::declval<T>().id)>> : std::true_type {};
+template<typename T, typename = void> struct ssl_cipher_has_id : std::false_type {};
+template<typename T> struct ssl_cipher_has_id<T, std::void_t<decltype(std::declval<T>().id)>> : std::true_type {};
 
 // ─── Output helpers ──────────────────────────────────────────────────────────
 
-void toUpper(const char *s) {
+void toUpper(const char* s) {
     for (int i = 0; s[i] != '\0'; i++) {
-        if (s[i] == '.' || s[i] == ':') putchar('_');
-        else putchar(toupper((unsigned char)s[i]));
+        if (s[i] == '.' || s[i] == ':')
+            putchar('_');
+        else
+            putchar(toupper((unsigned char)s[i]));
     }
 }
 
-void format(const char *struct_name, const char *field_name, size_t offset) {
+void format(const char* struct_name, const char* field_name, size_t offset) {
     printf("// %s->%s\n#define ", struct_name, field_name);
     toUpper(struct_name);
     putchar('_');
@@ -101,8 +96,7 @@ void format(const char *struct_name, const char *field_name, size_t offset) {
 // --- ssl_st::version ---------------------------------------------------------
 // Absent  → emit SSL_SESSION_ST_SSL_VERSION (Android 16+ feature flag).
 // Present → emit SSL_ST_VERSION.
-template <typename T, bool Present>
-struct emit_ssl_st_version {
+template<typename T, bool Present> struct emit_ssl_st_version {
     static void emit() {
         printf("// ssl_st->version removed in this BoringSSL version.\n");
         printf("// SSL_SESSION_ST_SSL_VERSION also acts as the Android 16+ feature flag\n");
@@ -110,8 +104,7 @@ struct emit_ssl_st_version {
         format("ssl_session_st", "ssl_version", offsetof(ssl_session_st, ssl_version));
     }
 };
-template <typename T>
-struct emit_ssl_st_version<T, true> {
+template<typename T> struct emit_ssl_st_version<T, true> {
     // offsetof(T, version) is a dependent expression: only compiled when T is known.
     static void emit() { format("ssl_st", "version", offsetof(T, version)); }
 };
@@ -119,19 +112,15 @@ struct emit_ssl_st_version<T, true> {
 // --- ssl_session_st::secret_length -------------------------------------------
 // Absent  → emit sentinel 0xFF (signals boringssl_masterkey.h to use the max).
 // Present → emit the real offset.
-template <typename T, bool Present>
-struct emit_secret_length {
+template<typename T, bool Present> struct emit_secret_length {
     static void emit() {
         printf("// ssl_session_st->secret_length removed in this BoringSSL version.\n");
         printf("// Sentinel 0xFF: boringssl_masterkey.h uses BORINGSSL_SSL_MAX_MASTER_KEY_LENGTH.\n");
         printf("#define SSL_SESSION_ST_SECRET_LENGTH 0xFF\n\n");
     }
 };
-template <typename T>
-struct emit_secret_length<T, true> {
-    static void emit() {
-        format("ssl_session_st", "secret_length", offsetof(T, secret_length));
-    }
+template<typename T> struct emit_secret_length<T, true> {
+    static void emit() { format("ssl_session_st", "secret_length", offsetof(T, secret_length)); }
 };
 
 // --- bssl::SSL3_STATE::version -----------------------------------------------
@@ -139,8 +128,7 @@ struct emit_secret_length<T, true> {
 // Present → emit BSSL__SSL3_STATE_VERSION (Android 16+ feature flag).
 //           boringssl_masterkey.h reads it before the TLS 1.2/1.3 branch so
 //           that TLS 1.3 connections are correctly identified.
-template <typename T, bool Present>
-struct emit_ssl3_state_version {
+template<typename T, bool Present> struct emit_ssl3_state_version {
     static void emit() { /* field not present in this version, nothing to emit */ }
 };
 // --- bssl::SSL3_STATE TLS 1.3 traffic secrets (Android 16+ InplaceVector layout) -------
@@ -150,12 +138,10 @@ struct emit_ssl3_state_version {
 // (+ _LEN size_ byte). Emit them here so the values track the struct instead of being
 // hand-maintained; the *_LEN offset is (next vector's offset) - 1, robust to any padding.
 // Absent on Android <=15 (private raw arrays) -> emit nothing; masterkey.h defaults apply.
-template <typename T, bool Present>
-struct emit_ssl3_traffic_secrets {
+template<typename T, bool Present> struct emit_ssl3_traffic_secrets {
     static void emit() { /* Android <=15: not public; nothing to emit */ }
 };
-template <typename T>
-struct emit_ssl3_traffic_secrets<T, true> {
+template<typename T> struct emit_ssl3_traffic_secrets<T, true> {
     static void emit() {
         size_t w = offsetof(T, write_traffic_secret);
         size_t r = offsetof(T, read_traffic_secret);
@@ -170,8 +156,7 @@ struct emit_ssl3_traffic_secrets<T, true> {
     }
 };
 
-template <typename T>
-struct emit_ssl3_state_version<T, true> {
+template<typename T> struct emit_ssl3_state_version<T, true> {
     static void emit() {
         printf("// SSL3_STATE->version added in Android 16 (replaces ssl_st->version).\n");
         printf("// BSSL__SSL3_STATE_VERSION is the Android 16+ feature flag used by\n");
@@ -184,12 +169,10 @@ struct emit_ssl3_state_version<T, true> {
 // Present (Android <=16) -> emit SSL_CIPHER_ST_ID = offsetof(id) (uint32).
 // Absent  (Android 17+)  -> field renamed to protocol_id (uint16); emit the same
 // SSL_CIPHER_ST_ID macro at offsetof(protocol_id) so downstream kern code is stable.
-template <typename T, bool Present>
-struct emit_cipher_id {
+template<typename T, bool Present> struct emit_cipher_id {
     static void emit() { format("ssl_cipher_st", "id", offsetof(T, protocol_id)); }
 };
-template <typename T>
-struct emit_cipher_id<T, true> {
+template<typename T> struct emit_cipher_id<T, true> {
     static void emit() { format("ssl_cipher_st", "id", offsetof(T, id)); }
 };
 
@@ -202,9 +185,9 @@ int main() {
     // ── ssl_st ────────────────────────────────────────────────────────────────
     emit_ssl_st_version<ssl_st, ssl_st_has_version<ssl_st>::value>::emit();
     format("ssl_st", "session", offsetof(ssl_st, session));
-    format("ssl_st", "rbio",    offsetof(ssl_st, rbio));
-    format("ssl_st", "wbio",    offsetof(ssl_st, wbio));
-    format("ssl_st", "s3",      offsetof(ssl_st, s3));
+    format("ssl_st", "rbio", offsetof(ssl_st, rbio));
+    format("ssl_st", "wbio", offsetof(ssl_st, wbio));
+    format("ssl_st", "s3", offsetof(ssl_st, s3));
 
     // ── ssl_session_st ────────────────────────────────────────────────────────
     emit_secret_length<ssl_session_st, ssl_session_has_secret_length<ssl_session_st>::value>::emit();
@@ -212,15 +195,15 @@ int main() {
     format("ssl_session_st", "cipher", offsetof(ssl_session_st, cipher));
 
     // ── bio / cipher ──────────────────────────────────────────────────────────
-    format("bio_st",        "num",    offsetof(bio_st, num));
-    format("bio_st",        "method", offsetof(bio_st, method));
-    format("bio_method_st", "type",   offsetof(bio_method_st, type));
+    format("bio_st", "num", offsetof(bio_st, num));
+    format("bio_st", "method", offsetof(bio_st, method));
+    format("bio_method_st", "type", offsetof(bio_method_st, type));
     emit_cipher_id<ssl_cipher_st, ssl_cipher_has_id<ssl_cipher_st>::value>::emit();
 
     // ── bssl::SSL3_STATE ──────────────────────────────────────────────────────
-    format("bssl::SSL3_STATE", "hs",                  offsetof(bssl::SSL3_STATE, hs));
-    format("bssl::SSL3_STATE", "client_random",       offsetof(bssl::SSL3_STATE, client_random));
-    format("bssl::SSL3_STATE", "exporter_secret",     offsetof(bssl::SSL3_STATE, exporter_secret));
+    format("bssl::SSL3_STATE", "hs", offsetof(bssl::SSL3_STATE, hs));
+    format("bssl::SSL3_STATE", "client_random", offsetof(bssl::SSL3_STATE, client_random));
+    format("bssl::SSL3_STATE", "exporter_secret", offsetof(bssl::SSL3_STATE, exporter_secret));
     format("bssl::SSL3_STATE", "established_session", offsetof(bssl::SSL3_STATE, established_session));
     emit_ssl3_state_version<bssl::SSL3_STATE, ssl3_state_has_version<bssl::SSL3_STATE>::value>::emit();
     emit_ssl3_traffic_secrets<bssl::SSL3_STATE, ssl3_state_has_version<bssl::SSL3_STATE>::value>::emit();
@@ -231,20 +214,20 @@ int main() {
     // renegotiate_mode) + sizeof(enum). eCapture reads this byte and masks 0x1 to map
     // write/read_traffic_secret to the correct absolute CLIENT/SERVER NSS keylog labels.
     printf("// ssl_st->server (bool:1) byte — mask 0x1; 1=server endpoint, 0=client\n");
-    printf("#define BSSL__SSL_ST_SERVER 0x%lx\n\n",
-           offsetof(ssl_st, renegotiate_mode) + sizeof(ssl_renegotiate_mode_t));
+    printf(
+        "#define BSSL__SSL_ST_SERVER 0x%lx\n\n", offsetof(ssl_st, renegotiate_mode) + sizeof(ssl_renegotiate_mode_t));
 
     // ── bssl::SSL_HANDSHAKE ───────────────────────────────────────────────────
     // TLS 1.3 secret offsets (secret_, early_traffic_secret_, …) are NOT emitted
     // here; boringssl_const.h computes them from BSSL__SSL_HANDSHAKE_MAX_VERSION
     // with the correct per-version step (48 for raw arrays, 49 for InplaceVectors).
-    format("bssl::SSL_HANDSHAKE", "new_session",    offsetof(bssl::SSL_HANDSHAKE, new_session));
-    format("bssl::SSL_HANDSHAKE", "early_session",  offsetof(bssl::SSL_HANDSHAKE, early_session));
-    format("bssl::SSL_HANDSHAKE", "hints",          offsetof(bssl::SSL_HANDSHAKE, hints));
+    format("bssl::SSL_HANDSHAKE", "new_session", offsetof(bssl::SSL_HANDSHAKE, new_session));
+    format("bssl::SSL_HANDSHAKE", "early_session", offsetof(bssl::SSL_HANDSHAKE, early_session));
+    format("bssl::SSL_HANDSHAKE", "hints", offsetof(bssl::SSL_HANDSHAKE, hints));
     format("bssl::SSL_HANDSHAKE", "client_version", offsetof(bssl::SSL_HANDSHAKE, client_version));
-    format("bssl::SSL_HANDSHAKE", "state",          offsetof(bssl::SSL_HANDSHAKE, state));
-    format("bssl::SSL_HANDSHAKE", "tls13_state",    offsetof(bssl::SSL_HANDSHAKE, tls13_state));
-    format("bssl::SSL_HANDSHAKE", "max_version",    offsetof(bssl::SSL_HANDSHAKE, max_version));
+    format("bssl::SSL_HANDSHAKE", "state", offsetof(bssl::SSL_HANDSHAKE, state));
+    format("bssl::SSL_HANDSHAKE", "tls13_state", offsetof(bssl::SSL_HANDSHAKE, tls13_state));
+    format("bssl::SSL_HANDSHAKE", "max_version", offsetof(bssl::SSL_HANDSHAKE, max_version));
 
     return 0;
 }

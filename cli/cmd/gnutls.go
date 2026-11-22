@@ -52,7 +52,7 @@ ecapture gnutls --gnutls=/data/data/com.termux/files/usr/lib/libgnutls.so
 func init() {
 	gnutlsCmd.PersistentFlags().StringVar(&gnutlsConfig.GnutlsPath, "gnutls", "", "libgnutls.so file path, will automatically find it from curl default.")
 	gnutlsCmd.PersistentFlags().StringVarP(&gnutlsConfig.CaptureMode, "model", "m", "text", "capture mode: text, pcap/pcapng, key/keylog")
-	gnutlsCmd.PersistentFlags().StringVar(&gnutlsConfig.TextSource, "text-source", handlers.TextSourcePcapng, "text capture source: pcapng (live TLS decryption) or hook")
+	gnutlsCmd.PersistentFlags().StringVar(&gnutlsConfig.TextSource, "text-source", handlers.TextSourceHook, "text capture source: hook (plaintext buffers) or pcapng (live TLS decryption)")
 	bindDecryptFlags(gnutlsCmd, &gnutlsConfig.DecryptConfig)
 	gnutlsCmd.PersistentFlags().StringVarP(&gnutlsConfig.KeylogFile, "keylogfile", "k", "ecapture_gnutls_key.log", "The file stores SSL/TLS keys, and eCapture captures these keys during encrypted traffic communication and saves them to the file.")
 	gnutlsCmd.PersistentFlags().StringVarP(&gnutlsConfig.PcapFile, "pcapfile", "w", "save.pcapng", "write the raw packets to file as pcapng format.")

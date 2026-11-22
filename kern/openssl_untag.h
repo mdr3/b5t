@@ -19,11 +19,11 @@
 
 #define OPENSSL_USER_POINTER_MASK 0x00FFFFFFFFFFFFFFULL
 
-static __always_inline void *openssl_untag_user_pointer(const void *pointer) {
-    return (void *)((u64)pointer & OPENSSL_USER_POINTER_MASK);
+static __always_inline void* openssl_untag_user_pointer(const void* pointer) {
+    return (void*)((u64)pointer & OPENSSL_USER_POINTER_MASK);
 }
 
-static __always_inline long openssl_probe_read_user(void *dst, u32 size, const void *src) {
+static __always_inline long openssl_probe_read_user(void* dst, u32 size, const void* src) {
     return bpf_probe_read_user(dst, size, openssl_untag_user_pointer(src));
 }
 

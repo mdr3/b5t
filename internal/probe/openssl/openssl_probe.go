@@ -349,6 +349,13 @@ func (p *Probe) setupManagerText() error {
 
 		// ------------------- SSL_set_fd hook-------------------------------------
 		{
+			Section:          "uprobe/SSL_set0_wbio",
+			EbpfFuncName:     "probe_SSL_set0_bio",
+			AttachToFuncName: "SSL_set0_wbio",
+			BinaryPath:       opensslPath,
+			UID:              "uprobe_ssl_set0_wbio",
+		},
+		{
 			Section:          "uprobe/SSL_set_fd",
 			EbpfFuncName:     "probe_SSL_set_fd",
 			AttachToFuncName: "SSL_set_fd",

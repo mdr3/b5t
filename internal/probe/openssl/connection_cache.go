@@ -71,19 +71,23 @@ func (c *connectionCache) observe(event *ConnDataEvent) {
 	defer c.mu.Unlock()
 	if c.byPID == nil {
 		c.byPID = make(map[uint32]map[uint32]connectionInfo)
+	}
+	if c.bySock == nil {
 		c.bySock = make(map[uint64]connectionKey)
 	}
-	if c.byPID[event.Pid] == nil {
-		c.byPID[event.Pid] = make(map[uint32]connectionInfo)
+	perPID := c.byPID[event.Pid]
+	if perPID == nil {
+		perPID = make(map[uint32]connectionInfo)
+		c.byPID[event.Pid] = perPID
 	}
-	if previous, ok := c.byPID[event.Pid][event.Fd]; ok {
+	if previous, ok := perPID[event.Fd]; ok {
 		delete(c.bySock, previous.sock)
 	}
 	if previousKey, ok := c.bySock[event.Sock]; ok {
 		c.removeLocked(previousKey, event.Sock)
 	}
 	c.nextGeneration++
-	c.byPID[event.Pid][event.Fd] = connectionInfo{
+	perPID[event.Fd] = connectionInfo{
 		tuple:           event.Tuple,
 		sock:            event.Sock,
 		sourceIP:        source.String(),

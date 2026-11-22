@@ -41,7 +41,7 @@ struct {
 } events SEC(".maps");
 
 SEC("uprobe/dispatch_command")
-int mysql56_query(struct pt_regs *ctx) {
+int mysql56_query(struct pt_regs* ctx) {
     /*
     Trace only packets with enum_server_command == COM_QUERY
     https://dev.mysql.com/doc/internals/en/com-query.html COM_QUERT command 03
@@ -82,7 +82,7 @@ int mysql56_query(struct pt_regs *ctx) {
     data.len = len;
     bpf_get_current_comm(&data.comm, sizeof(data.comm));
 
-    bpf_probe_read_user(&data.query, len, (void *)PT_REGS_PARM3(ctx));
+    bpf_probe_read_user(&data.query, len, (void*)PT_REGS_PARM3(ctx));
 
     bpf_map_update_elem(&sql_hash, &pid, &data, BPF_ANY);
     //    bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU,
@@ -91,7 +91,7 @@ int mysql56_query(struct pt_regs *ctx) {
 }
 
 SEC("uretprobe/dispatch_command")
-int mysql56_query_return(struct pt_regs *ctx) {
+int mysql56_query_return(struct pt_regs* ctx) {
     // https://github.com/MariaDB/server/blob/b5852ffbeebc3000982988383daeefb0549e058a/sql/sql_parse.h#L112
     // enum dispatch_command_return
     //       {
@@ -113,7 +113,7 @@ int mysql56_query_return(struct pt_regs *ctx) {
     }
 
     s8 command_return = (u64)PT_REGS_RC(ctx);
-    struct data_t *data = bpf_map_lookup_elem(&sql_hash, &pid);
+    struct data_t* data = bpf_map_lookup_elem(&sql_hash, &pid);
     if (!data) {
         return 0;  // missed start
     }
@@ -155,7 +155,7 @@ struct COM_QUERY_DATA {
 // mysql 5.7
 // https://github.com/mysql/mysql-server/blob/5.7/include/mysql/com_data.h
 struct COM_QUERY_DATA {
-    const char *query;
+    const char* query;
     unsigned int length;
     //  struct PS_PARAM *parameters;    TODO
     //  unsigned long parameter_count;
@@ -168,7 +168,7 @@ struct COM_QUERY_DATA {
 //  version:8.0.28-0ubuntu0.20.04.3
 //
 SEC("uprobe/dispatch_command_57")
-int mysql57_query(struct pt_regs *ctx) {
+int mysql57_query(struct pt_regs* ctx) {
     u64 command = (u64)PT_REGS_PARM3(ctx);
     if (command != COM_QUERY) {
         return 0;
@@ -186,7 +186,7 @@ int mysql57_query(struct pt_regs *ctx) {
     data.pid = pid;  // only process id
     data.timestamp = bpf_ktime_get_ns();
 
-    void *st = (void *)PT_REGS_PARM2(ctx);
+    void* st = (void*)PT_REGS_PARM2(ctx);
     struct COM_QUERY_DATA query;
     bpf_probe_read_user(&query, sizeof(query), st);
     bpf_probe_read_user(&data.query, sizeof(data.query), query.query);
@@ -208,7 +208,7 @@ int mysql57_query(struct pt_regs *ctx) {
 //    1   request of thread shutdown, i. e. if command is
 //        COM_QUIT
 SEC("uretprobe/dispatch_command_57")
-int mysql57_query_return(struct pt_regs *ctx) {
+int mysql57_query_return(struct pt_regs* ctx) {
     u64 current_pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = current_pid_tgid >> 32;
 
@@ -217,7 +217,7 @@ int mysql57_query_return(struct pt_regs *ctx) {
     }
 
     u8 command_return = (u64)PT_REGS_RC(ctx);
-    struct data_t *data = bpf_map_lookup_elem(&sql_hash, &pid);
+    struct data_t* data = bpf_map_lookup_elem(&sql_hash, &pid);
     if (!data) {
         return 0;  // missed start
     }

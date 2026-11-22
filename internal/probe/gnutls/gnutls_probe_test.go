@@ -98,8 +98,8 @@ func TestProbe_PcapngTextDefaultStdout(t *testing.T) {
 	if cfg.GetEventCollectorAddr() != "" || cfg.PcapFile != "" || cfg.KeylogFile != "" {
 		t.Fatal("default text output must not require artifact files")
 	}
-	if _, ok := probe.mapNameToDecoder["skb_events"]; !ok {
-		t.Fatal("default text output did not configure packet capture")
+	if _, ok := probe.mapNameToDecoder["gnutls_events"]; !ok {
+		t.Fatal("default text output did not configure TLS hooks")
 	}
 
 	cfg.CaptureMode = handlers.ModePcapng

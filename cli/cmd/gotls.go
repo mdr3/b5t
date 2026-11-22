@@ -51,7 +51,7 @@ func init() {
 	gotlsCmd.PersistentFlags().StringVar(&gotlsConfig.HarFile, "harfile", "", "write decrypted HTTP (h1/h2) traffic to a HAR 1.2 archive (empty disables it).")
 	gotlsCmd.PersistentFlags().StringVar(&gotlsConfig.XmlFile, "xmlfile", "", "write decrypted HTTP (h1/h2) traffic to a Burp Suite XML export (empty disables it).")
 	gotlsCmd.PersistentFlags().StringVarP(&gotlsConfig.CaptureMode, "model", "m", "text", "capture mode: text, pcap/pcapng, key/keylog")
-	gotlsCmd.PersistentFlags().StringVar(&gotlsConfig.TextSource, "text-source", handlers.TextSourcePcapng, "text capture source: pcapng (live TLS decryption) or hook")
+	gotlsCmd.PersistentFlags().StringVar(&gotlsConfig.TextSource, "text-source", handlers.TextSourceHook, "text capture source: hook (plaintext buffers) or pcapng (live TLS decryption)")
 	bindDecryptFlags(gotlsCmd, &gotlsConfig.DecryptConfig)
 	gotlsCmd.PersistentFlags().StringVarP(&gotlsConfig.KeylogFile, "keylogfile", "k", "ecapture_gotls_key.log", "The file stores SSL/TLS keys, and eCapture captures these keys during encrypted traffic communication and saves them to the file.")
 	gotlsCmd.PersistentFlags().StringVarP(&gotlsConfig.Ifname, "ifname", "i", "", "capture interface; automatically selected from default routes, then traffic counters, when omitted")

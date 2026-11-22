@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,15 @@ func TestExtraceGoVersionGccgo(t *testing.T) {
 	}
 
 	c := exec.Command("go", "build", "-v", ".")
+	// host cgo binary: drop inherited Android NDK CC / CGO_ENABLED, force host toolchain
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "CC=") || strings.HasPrefix(kv, "CGO_ENABLED=") || strings.HasPrefix(kv, "GOOS=") || strings.HasPrefix(kv, "GOARCH=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	c.Env = append(env, "CGO_ENABLED=1", "CC=gcc")
 
 	var outb, errb bytes.Buffer
 	c.Stdout = &outb

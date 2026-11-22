@@ -53,9 +53,9 @@ func TestTLSHTTPTextSourceDefaults(t *testing.T) {
 	} {
 		t.Run(module.name, func(t *testing.T) {
 			for _, test := range []struct{ body, want string }{
-				{`{}`, "pcapng"},
-				{`{"capturemode":"text"}`, "pcapng"},
-				{`{"capturemode":"text","text_source":""}`, "pcapng"},
+				{`{}`, "hook"},
+				{`{"capturemode":"text"}`, "hook"},
+				{`{"capturemode":"text","text_source":""}`, "hook"},
 				{`{"capturemode":"text","text_source":"hook"}`, "hook"},
 				{`{"capturemode":"keylog"}`, "hook"},
 				{`{"capturemode":"pcapng"}`, "hook"},

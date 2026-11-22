@@ -31,7 +31,7 @@
     X(bio_method_st, type)                          \
     X(quic_conn_st, tls)
 
-void toUpper(char *s) {
+void toUpper(char* s) {
     int i = 0;
     while (s[i] != '\0') {
         if (s[i] == '.') {
@@ -43,7 +43,7 @@ void toUpper(char *s) {
     }
 }
 
-void format(char *struct_name, char *field_name, size_t offset) {
+void format(char* struct_name, char* field_name, size_t offset) {
     printf("// %s->%s\n", struct_name, field_name);
     printf("#define ");
     toUpper(struct_name);

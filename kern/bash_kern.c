@@ -37,10 +37,10 @@ struct {
     __uint(max_entries, 1024);
 } events_t SEC(".maps");
 // Force emitting struct event into the ELF.
-const struct event *unused __attribute__((unused));
+const struct event* unused __attribute__((unused));
 
 SEC("uretprobe/bash_readline")
-int uretprobe_bash_readline(struct pt_regs *ctx) {
+int uretprobe_bash_readline(struct pt_regs* ctx) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = pid_tgid >> 32;
     u64 current_uid_gid = bpf_get_current_uid_gid();
@@ -55,7 +55,7 @@ int uretprobe_bash_readline(struct pt_regs *ctx) {
     event.uid = uid;
     event.type = BASH_EVENT_TYPE_READLINE;
     // bpf_printk("!! uretprobe_bash_readline pid:%d",target_pid );
-    bpf_probe_read_user(&event.line, sizeof(event.line), (void *)PT_REGS_RC(ctx));
+    bpf_probe_read_user(&event.line, sizeof(event.line), (void*)PT_REGS_RC(ctx));
     bpf_get_current_comm(&event.comm, sizeof(event.comm));
     bpf_map_update_elem(&events_t, &pid, &event, BPF_ANY);
     bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &event, sizeof(struct event));
@@ -63,7 +63,7 @@ int uretprobe_bash_readline(struct pt_regs *ctx) {
     return 0;
 }
 SEC("uretprobe/bash_retval")
-int uretprobe_bash_retval(struct pt_regs *ctx) {
+int uretprobe_bash_retval(struct pt_regs* ctx) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = pid_tgid >> 32;
     u64 current_uid_gid = bpf_get_current_uid_gid();
@@ -74,7 +74,7 @@ int uretprobe_bash_retval(struct pt_regs *ctx) {
         return 0;
     }
 
-    struct event *event_p = bpf_map_lookup_elem(&events_t, &pid);
+    struct event* event_p = bpf_map_lookup_elem(&events_t, &pid);
 
     if (less52 != 1) {
         // if target_errno is 128 then we target all
@@ -99,7 +99,7 @@ int uretprobe_bash_retval(struct pt_regs *ctx) {
     return 0;
 }
 
-static __always_inline int send_bash_exit_event(struct pt_regs *ctx) {
+static __always_inline int send_bash_exit_event(struct pt_regs* ctx) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = pid_tgid >> 32;
     u64 current_uid_gid = bpf_get_current_uid_gid();
@@ -115,7 +115,7 @@ static __always_inline int send_bash_exit_event(struct pt_regs *ctx) {
 }
 
 SEC("uprobe/exec_builtin")
-int uprobe_exec_builtin(struct pt_regs *ctx) { return send_bash_exit_event(ctx); }
+int uprobe_exec_builtin(struct pt_regs* ctx) { return send_bash_exit_event(ctx); }
 
 SEC("uprobe/exit_builtin")
-int uprobe_exit_builtin(struct pt_regs *ctx) { return send_bash_exit_event(ctx); }
+int uprobe_exit_builtin(struct pt_regs* ctx) { return send_bash_exit_event(ctx); }

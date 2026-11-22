@@ -288,6 +288,7 @@ KERN_BUILD_PATH ?= $(if $(KERN_HEADERS),$(KERN_HEADERS),/lib/modules/$(KERN_RELE
 KERN_SRC_PATH ?= $(if $(KERN_HEADERS),$(KERN_HEADERS),$(if $(wildcard /lib/modules/$(KERN_RELEASE)/source),/lib/modules/$(KERN_RELEASE)/source,$(KERN_BUILD_PATH)))
 
 KERN_INCLUDES_NOCORE = $(BPFHEADER) \
+	-include $(firstword $(wildcard $(KERN_BUILD_PATH)/include/generated/autoconf.h) $(wildcard $(KERN_SRC_PATH)/include/generated/autoconf.h)) \
 	-I $(KERN_SRC_PATH)/arch/$(LINUX_ARCH)/include \
 	-I $(KERN_BUILD_PATH)/arch/$(LINUX_ARCH)/include/generated \
 	-I $(KERN_SRC_PATH)/include \

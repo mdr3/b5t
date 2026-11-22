@@ -30,10 +30,10 @@ struct {
 } events SEC(".maps");
 
 // Force emitting struct event into the ELF.
-const struct event *unused __attribute__((unused));
+const struct event* unused __attribute__((unused));
 
 SEC("uretprobe/zsh_zleentry")
-int uretprobe_zsh_zleentry(struct pt_regs *ctx) {
+int uretprobe_zsh_zleentry(struct pt_regs* ctx) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 pid = pid_tgid >> 32;
     u64 current_uid_gid = bpf_get_current_uid_gid();
@@ -46,7 +46,7 @@ int uretprobe_zsh_zleentry(struct pt_regs *ctx) {
     event.uid = uid;
     event.type = ZSH_EVENT_TYPE_READLINE;
     bpf_get_current_comm(&event.comm, sizeof(event.comm));
-    bpf_probe_read_user(&event.line, sizeof(event.line), (void *)PT_REGS_RC(ctx));
+    bpf_probe_read_user(&event.line, sizeof(event.line), (void*)PT_REGS_RC(ctx));
     bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &event, sizeof(struct event));
     return 0;
 }

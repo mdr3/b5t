@@ -23,9 +23,6 @@ func NormalizeTextSource(mode, source string) (string, error) {
 	source = strings.ToLower(strings.TrimSpace(source))
 	if source == "" {
 		source = TextSourceHook
-		if mode == "" || mode == ModeText {
-			source = TextSourcePcapng
-		}
 	}
 	if source != TextSourceHook && source != TextSourcePcapng {
 		return "", fmt.Errorf("unsupported text source %q (supported: hook, pcapng)", source)
